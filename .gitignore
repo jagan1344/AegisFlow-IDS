@@ -1,0 +1,10 @@
+# raw data is never committed - use data/download.py
+data/raw/
+artifacts/
+results/synthetic_smoke/
+*.zip
+*.parquet
+*.joblib
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
