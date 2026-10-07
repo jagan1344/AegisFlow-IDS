@@ -1,8 +1,7 @@
 # AegisFlow IDS
 
 A confidence-aware, explainable, zero-day-aware network intrusion detection
-system with an LLM-powered SOC Copilot. It is free and software-only: the
-models train on Colab's free tier and the app runs on an ordinary laptop.
+system with an LLM-powered SOC Copilot. 
 
 > Status: **Phase 1 of 9 is done** (data pipeline and honest baselines).
 > Phases 2–9 (cross-dataset tests, open-set detection, confidence engine,
