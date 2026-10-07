@@ -133,13 +133,27 @@ def map_label(raw: object, level: str = "family", attempted_as_benign: bool = Tr
 # ---------------------------------------------------------------------------
 # 3. Loading
 # ---------------------------------------------------------------------------
-def _read_one_csv(path: Path, max_rows: int | None) -> pd.DataFrame:
-    """Read one CSV; the original files are not valid UTF-8, so fall back."""
+def _read_one_csv(
+    path: Path,
+    max_rows: int | None,
+    benign_frac: float = 1.0,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Read one CSV; the original files are not valid UTF-8, so fall back.
+
+    If benign_frac < 1, only that fraction of BENIGN rows is kept (all attack
+    rows are kept). Doing this per file keeps peak RAM low on laptops.
+    """
     try:
         df = pd.read_csv(path, nrows=max_rows, low_memory=False, encoding="utf-8")
     except UnicodeDecodeError:
         df = pd.read_csv(path, nrows=max_rows, low_memory=False, encoding="latin-1")
     df = normalise_columns(df)
+    if benign_frac < 1.0 and LABEL_COL in df.columns:
+        is_benign = df[LABEL_COL].map(clean_label_text).str.lower() == "benign"
+        rng = np.random.default_rng(seed)
+        keep = ~is_benign | (rng.random(len(df)) < benign_frac)
+        df = df[keep.to_numpy()].reset_index(drop=True)
     # Halve memory: float64 -> float32 for every numeric feature.
     for col in df.columns:
         if col != LABEL_COL and pd.api.types.is_float_dtype(df[col]):
@@ -148,7 +162,12 @@ def _read_one_csv(path: Path, max_rows: int | None) -> pd.DataFrame:
     return df
 
 
-def load_csv_folder(folder: str | Path, max_rows_per_file: int | None = None) -> pd.DataFrame:
+def load_csv_folder(
+    folder: str | Path,
+    max_rows_per_file: int | None = None,
+    benign_load_frac: float = 1.0,
+    seed: int = 42,
+) -> pd.DataFrame:
     """Load and concatenate every *.csv under `folder` (recursively)."""
     folder = Path(folder)
     files = sorted(folder.rglob("*.csv"))
@@ -160,7 +179,7 @@ def load_csv_folder(folder: str | Path, max_rows_per_file: int | None = None) ->
     frames = []
     for f in files:
         log.info("Reading %s", f)
-        frames.append(_read_one_csv(f, max_rows_per_file))
+        frames.append(_read_one_csv(f, max_rows_per_file, benign_load_frac, seed))
     df = pd.concat(frames, ignore_index=True)
     if LABEL_COL not in df.columns:
         raise KeyError(f"No 'Label' column found in {folder}; columns: {list(df.columns)[:10]}...")

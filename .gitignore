@@ -8,3 +8,4 @@ results/synthetic_smoke/
 __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
+.venv/

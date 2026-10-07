@@ -96,3 +96,23 @@ def test_single_threaded_restores_n_jobs():
     with single_threaded(m):
         assert m.n_jobs == 1
     assert m.n_jobs == -1
+
+
+def test_resample_by_weight_balances_classes():
+    from aegisflow.models.baselines import resample_by_weight
+
+    X = np.arange(1000, dtype=np.float32).reshape(-1, 1)
+    y = np.array([0] * 900 + [1] * 100)
+    _, yr = resample_by_weight(X, y, balanced_sample_weight(y), seed=0)
+    assert len(yr) == 1000
+    assert 0.4 < (yr == 1).mean() < 0.6   # roughly 50/50 after resampling
+
+
+def test_fit_model_fallback_for_estimator_without_sample_weight():
+    from sklearn.neighbors import KNeighborsClassifier  # fit() has no sample_weight
+
+    rng = np.random.default_rng(0)
+    X = np.vstack([rng.normal(0, 1, (200, 2)), rng.normal(5, 1, (20, 2))])
+    y = np.array([0] * 200 + [1] * 20)
+    m = fit_model(KNeighborsClassifier(n_neighbors=3), X, y, balanced_sample_weight(y))
+    assert (m.predict(X) == y).mean() > 0.9

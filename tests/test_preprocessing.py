@@ -142,3 +142,16 @@ def test_smote_only_grows_minority():
     y = np.array([0] * 100 + [1] * 20)
     Xr, yr = apply_smote(X, y, target=60, seed=0)
     assert (yr == 0).sum() == 100 and (yr == 1).sum() == 60
+
+
+def test_benign_load_frac_keeps_all_attacks(tmp_path):
+    from aegisflow.preprocessing import load_csv_folder
+
+    raw = make_synthetic_cicids(2000, seed=5)
+    raw.to_csv(tmp_path / "day.csv", index=False)
+    full = load_csv_folder(tmp_path)
+    part = load_csv_folder(tmp_path, benign_load_frac=0.2, seed=0)
+    n_att_full = (full[LABEL_COL] != "BENIGN").sum()
+    assert (part[LABEL_COL] != "BENIGN").sum() == n_att_full
+    ratio = (part[LABEL_COL] == "BENIGN").sum() / (full[LABEL_COL] == "BENIGN").sum()
+    assert 0.1 < ratio < 0.3

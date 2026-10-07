@@ -28,7 +28,10 @@ def main() -> None:
     p.add_argument("--sample-frac", type=float, default=None)
     p.add_argument("--min-per-class", type=int, default=None)
     p.add_argument("--max-per-class", type=int, default=None)
-    p.add_argument("--max-rows-per-file", type=int, default=None)
+    p.add_argument("--max-rows-per-file", type=int, default=None,
+                   help="debug only: truncating files drops whole attack types")
+    p.add_argument("--benign-load-frac", type=float, default=None,
+                   help="keep this fraction of BENIGN rows while reading (saves RAM)")
     p.add_argument("--imbalance", choices=["class_weight", "smote", "both", "none"], default=None)
     p.add_argument("--models", nargs="+", default=None)
     p.add_argument("--keep-dst-port", action="store_true")
@@ -39,6 +42,7 @@ def main() -> None:
     cfg = Phase1Config()
     for arg, attr in [("sample_frac", "sample_frac"), ("min_per_class", "min_per_class"),
                       ("max_per_class", "max_per_class"), ("max_rows_per_file", "max_rows_per_file"),
+                      ("benign_load_frac", "benign_load_frac"),
                       ("imbalance", "imbalance")]:
         if getattr(args, arg) is not None:
             setattr(cfg, attr, getattr(args, arg))

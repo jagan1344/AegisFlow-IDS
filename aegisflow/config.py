@@ -78,8 +78,15 @@ class Phase1Config:
     # we report how many there are and drop them if True.
     drop_conflicting: bool = True
     keep_dst_port: bool = KEEP_DST_PORT
-    # For laptops: read at most this many rows per CSV (None = all rows).
+    # Debug only: read the first N rows of each CSV (None = all rows).
+    # WARNING: attacks happen at specific times of day, so truncating a file
+    # drops whole attack types. Use benign_load_frac to save RAM instead.
     max_rows_per_file: int | None = None
+    # Laptop RAM saver: while reading, keep every non-BENIGN row but only this
+    # fraction of BENIGN rows (random, seeded). 1.0 = keep everything.
+    # Recorded in the results JSON; it changes the benign/attack ratio, so
+    # compare runs only when they used the same value.
+    benign_load_frac: float = 1.0
 
     # ---- stratified sampling (to fit Colab RAM) -------------------------
     # Each class keeps `sample_frac` of its rows, but never fewer than
@@ -120,6 +127,8 @@ class Phase1Config:
             raise ValueError("label_level must be 'family' or 'fine'")
         if self.imbalance not in {"class_weight", "smote", "both", "none"}:
             raise ValueError("imbalance must be class_weight|smote|both|none")
+        if not 0 < self.benign_load_frac <= 1:
+            raise ValueError("benign_load_frac must be in (0, 1]")
         if not 0 < self.val_size + self.test_size < 1:
             raise ValueError("val_size + test_size must be in (0, 1)")
 

@@ -11,6 +11,8 @@ and the MLP too, so the comparison between models is fair.
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 from lightgbm import LGBMClassifier
 from sklearn.base import BaseEstimator
@@ -151,46 +153,69 @@ def balanced_sample_weight(y: np.ndarray) -> np.ndarray:
     )
 
 
+def _accepts_sample_weight(estimator: BaseEstimator) -> bool:
+    """True if estimator.fit() has a `sample_weight` argument.
+
+    MLPClassifier only gained it in scikit-learn 1.7, so older installs
+    (common on laptops) need the fallback below.
+    """
+    return "sample_weight" in inspect.signature(estimator.fit).parameters
+
+
+def resample_by_weight(
+    X: np.ndarray,
+    y: np.ndarray,
+    sample_weight: np.ndarray,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Draw len(y) rows with probability proportional to their weight.
+
+    Training on this resampled set gives, in expectation, the same loss as
+    training with sample weights, so a model that cannot take weights still
+    gets the same imbalance handling as the others.
+    """
+    rng = np.random.default_rng(seed)
+    p = sample_weight / sample_weight.sum()
+    idx = rng.choice(len(y), size=len(y), replace=True, p=p)
+    return X[idx], y[idx]
+
+
 def fit_model(
     model: BaseEstimator,
     X: np.ndarray,
     y: np.ndarray,
     sample_weight: np.ndarray | None,
+    seed: int = 42,
 ) -> BaseEstimator:
-    """Fit a baseline model, routing sample weights where supported.
+    """Fit a baseline model, routing sample weights correctly.
 
-    Pipelines need the sample weights addressed to their final classifier
-    using ``clf__sample_weight``.
-
-    Important:
-        sklearn's MLPClassifier does not support sample_weight in the
-        installed scikit-learn version. Therefore, when the final classifier
-        is MLPClassifier, the model is fitted without sample weights.
-
-    This keeps the rest of the Phase 1 model interface unchanged.
+    * Pipelines need the weights addressed to their final step
+      (``clf__sample_weight``).
+    * If the final classifier cannot take sample weights (MLPClassifier on
+      scikit-learn < 1.7), the training rows are resampled by weight
+      instead, so every model still gets the same imbalance handling.
     """
 
     # No weights requested.
     if sample_weight is None:
         return model.fit(X, y)
 
-    # MLPClassifier does not accept sample_weight.
+    clf = model.named_steps["clf"] if isinstance(model, Pipeline) else model
+
+    # Old scikit-learn: emulate the weights by weighted resampling.
+    if not _accepts_sample_weight(clf):
+        X_res, y_res = resample_by_weight(X, y, sample_weight, seed)
+        return model.fit(X_res, y_res)
+
+    # Pipeline classifiers receive the weights through the final "clf" step.
     if isinstance(model, Pipeline):
-        clf = model.named_steps.get("clf")
-
-        if isinstance(clf, MLPClassifier):
-            return model.fit(X, y)
-
-        # Other pipeline classifiers receive the weights through
-        # the final "clf" step.
         return model.fit(
             X,
             y,
             clf__sample_weight=sample_weight,
         )
 
-    # Non-pipeline models such as Random Forest, XGBoost and LightGBM
-    # receive sample_weight directly.
+    # Random Forest, XGBoost and LightGBM receive sample_weight directly.
     return model.fit(
         X,
         y,

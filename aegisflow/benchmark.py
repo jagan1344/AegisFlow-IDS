@@ -135,7 +135,7 @@ def run_phase1(
         log.info("[%s] training %s on %d rows", dataset_name, name, len(y_tr))
         model = build_model(name, seed=cfg.seed, n_jobs=cfg.n_jobs)
         t0 = time.time()
-        fit_model(model, X_tr, y_tr, weights)
+        fit_model(model, X_tr, y_tr, weights, seed=cfg.seed)
         train_s = time.time() - t0
         metrics = evaluate_classifier(
             model, X_te, y_te, class_names, benign_idx,
@@ -158,7 +158,7 @@ def run_phase1(
 
 def run_from_folder(folder: str | Path, dataset_name: str, cfg: Phase1Config) -> dict:
     """Convenience wrapper: load CSVs from a folder, then run_phase1."""
-    raw = load_csv_folder(folder, cfg.max_rows_per_file)
+    raw = load_csv_folder(folder, cfg.max_rows_per_file, cfg.benign_load_frac, cfg.seed)
     return run_phase1(raw, dataset_name, cfg)
 
 

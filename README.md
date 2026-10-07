@@ -39,32 +39,49 @@ AegisFlow-IDS/
                synthetic.py (test data only)  models/baselines.py
   data/        download.py  DATASETS.md          (raw data is git-ignored)
   notebooks/   01_phase1_baselines.ipynb          (Colab)
-  scripts/     run_phase1.py  compare_phase1.py
+  scripts/     phase1_all.py (one command)  run_phase1.py  compare_phase1.py
   tests/       pytest suite
 ```
 
-## Run it
+## Run it in VS Code (recommended)
 
 ```bash
-git clone https://github.com/jagan1344/AegisFlow-IDS.git && cd AegisFlow-IDS
+git clone https://github.com/jagan1344/AegisFlow-IDS.git
+cd AegisFlow-IDS
+python -m venv .venv
+# Windows:      .venv\Scripts\activate
+# macOS/Linux:  source .venv/bin/activate
 pip install -r requirements.txt
-pytest -q                                        # unit tests, about 10 s
-python scripts/run_phase1.py --synthetic         # smoke test on FAKE data (not results)
+pytest -q                                   # 45 tests, about 10 s
+python scripts/run_phase1.py --synthetic    # 10-second check on FAKE data (not results)
 
+# Phase 1, one command (downloads the original dataset itself):
+python scripts/phase1_all.py --improved-zip "PATH/TO/corrected_cicids2017.zip" --laptop
+```
+
+* `--laptop` keeps all attack rows but only 30% of BENIGN rows while
+  reading, which suits laptops with 8 GB of RAM. Drop it if you have 16 GB or more.
+* `--quick` trains only LogReg and LightGBM, as a fast first run.
+* If the automatic download fails, download `MachineLearningCSV.zip` from
+  the UNB page and add `--original-zip "PATH/TO/MachineLearningCSV.zip"`.
+* In VS Code you can also press **F5** and pick a run from `.vscode/launch.json`.
+
+Step by step (the same thing as single commands):
+
+```bash
 python data/download.py list                     # dataset sources and licences
 python data/download.py fetch cicids2017_original
-python data/download.py extract cicids2017_improved ~/Downloads/<zip>   # after manual download
+python data/download.py extract cicids2017_improved PATH/TO/zip
 python scripts/run_phase1.py --dataset cicids2017_original
 python scripts/run_phase1.py --dataset cicids2017_improved
 python scripts/compare_phase1.py --original results/phase1_cicids2017_original.json \
                                  --improved results/phase1_cicids2017_improved.json
 ```
 
-On a laptop with little RAM, add `--max-rows-per-file 200000` or
-`--sample-frac 0.1`.
+Colab alternative: `notebooks/01_phase1_baselines.ipynb`.
 
 ## Results
 
-No real-data results are reported yet. Run the notebook and paste the
+No real-data results are reported yet. Run `scripts/phase1_all.py` and paste the
 tables from `results/phase1_comparison.md`. The synthetic smoke test only
 checks that the code runs and says nothing about IDS performance.
