@@ -125,6 +125,7 @@ def test_run_phase2_end_to_end(tmp_path):
     assert len(set(sizes.values())) == 1
     table = summary_table(res)
     assert len(table) == len(cfg.experiments)
+    assert res["data"]["cic2018"]["files_used"] == []  # in-memory frame: no file names
     saved = json.loads((tmp_path / "phase2.json").read_text())
     assert "data" in saved and (tmp_path / "phase2_summary.md").exists()
 

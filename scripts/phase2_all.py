@@ -87,6 +87,8 @@ def main() -> None:
 
     print("\n=== Step 3/3: experiments ===")
     res = run_phase2(cfg, source_raw, cic_raw, unsw_raw)
+    if "cic2018" in res["data"]:
+        print("CSE-CIC-IDS2018 day files used:", ", ".join(res["data"]["cic2018"]["files_used"]))
 
     print("\n--- Summary (each row: one experiment x model) ---")
     print(summary_table(res).round(4).to_string(index=False))

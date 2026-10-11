@@ -248,6 +248,9 @@ def prepare_cic_target(raw: pd.DataFrame, cfg: Phase2Config) -> tuple[pd.DataFra
         sample, train_size=cfg.adapt_frac, stratify=sample[LABEL_COL], random_state=cfg.seed
     )
     info = {
+        # Which day files were used (the report must state the subset).
+        "files_used": sorted(clean["source_file"].unique().tolist())
+        if "source_file" in clean.columns else [],
         "cleaning": report.to_dict(),
         "class_counts_test": test[LABEL_COL].value_counts().to_dict(),
         "class_counts_adapt": adapt[LABEL_COL].value_counts().to_dict(),
