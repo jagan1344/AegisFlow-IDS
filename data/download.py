@@ -133,6 +133,13 @@ def extract(key: str, zip_path: Path) -> None:
     print(f"Extracted {len(members)} CSV files to {out}")
 
 
+def _check_url(url: str) -> None:
+    """Fail clearly on placeholders like 'LINK-OF-THE-2018-ZIP'."""
+    if not url.lower().startswith(("http://", "https://")):
+        sys.exit(f"[!!] {url!r} is not a web address. Use a real link that starts "
+                 "with https:// (copy it from the list the script printed).")
+
+
 def _download_file(url: str, dest: Path) -> None:
     """Stream a URL to disk with a progress line (resumes nothing, but a
     finished file of the right size is not downloaded again)."""
@@ -269,6 +276,7 @@ def remote_zip_extract(key: str, url: str, patterns: list[str]) -> list[str]:
 
 
 def cmd_remote_zip(args: argparse.Namespace) -> None:
+    _check_url(args.url)
     try:
         names = remote_zip_extract(args.dataset, args.url, args.match or [])
     except RuntimeError as exc:
@@ -289,6 +297,8 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         return
     urls = args.url if isinstance(args.url, list) else ([args.url] if args.url else [])
     # Direct CSV links (e.g. day files in a web folder): stream each one.
+    for u in urls:
+        _check_url(u)
     if urls and all(u.lower().split("?")[0].endswith(".csv") for u in urls):
         out.mkdir(parents=True, exist_ok=True)
         for u in urls:
