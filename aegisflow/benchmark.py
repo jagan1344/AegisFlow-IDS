@@ -175,7 +175,8 @@ def run_phase1(
 
 def run_from_folder(folder: str | Path, dataset_name: str, cfg: Phase1Config) -> dict:
     """Convenience wrapper: load CSVs from a folder, then run_phase1."""
-    raw = load_csv_folder(folder, cfg.max_rows_per_file, cfg.benign_load_frac, cfg.seed)
+    raw = load_csv_folder(folder, cfg.max_rows_per_file, cfg.benign_load_frac, cfg.seed,
+                          cfg.attack_load_frac)
     return run_phase1(raw, dataset_name, cfg)
 
 

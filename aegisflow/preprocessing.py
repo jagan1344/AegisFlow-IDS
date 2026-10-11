@@ -92,17 +92,20 @@ def clean_label_text(raw: object) -> str:
 
 
 def map_label(raw: object, level: str = "family", attempted_as_benign: bool = True) -> str:
-    """Map a raw CIC-IDS2017 label to the label used for training.
+    """Map a raw CIC-IDS2017 / CSE-CIC-IDS2018 label to the training label.
 
     Families (order of checks matters, e.g. 'DDoS' contains 'DoS',
     'Web Attack - Brute Force' contains 'Brute Force'):
       BENIGN, DDoS, DoS, PortScan, BruteForce, WebAttack, Bot, Infiltration,
       Heartbleed.
+    Handles the 2018 spellings too: 'DDOS attack-HOIC', 'DoS attacks-Hulk',
+    'FTP-BruteForce', 'Brute Force -Web', 'Brute Force -XSS', 'Infilteration'
+    (sic), 'Botnet Ares'.
     """
     text = clean_label_text(raw)
     low = text.lower()
     if "attempted" in low:
-        # Improved dataset only: failed/empty attack attempts.
+        # Improved datasets only: failed/empty attack attempts.
         if attempted_as_benign:
             return BENIGN_LABEL
         return "Attempted" if level == "family" else text
@@ -114,15 +117,15 @@ def map_label(raw: object, level: str = "family", attempted_as_benign: bool = Tr
         return "DDoS"
     if "heartbleed" in low:
         return "Heartbleed"
-    if "infiltration" in low:  # includes "Infiltration - Portscan"
+    if "infiltration" in low or "infilteration" in low:  # 2018 typo
         return "Infiltration"
-    if "web attack" in low or "xss" in low or "sql injection" in low:
+    if "web" in low or "xss" in low or "sql" in low:      # before BruteForce
         return "WebAttack"
     if "dos" in low:
         return "DoS"
     if "portscan" in low or "port scan" in low:
         return "PortScan"
-    if "patator" in low or "brute force" in low:
+    if "patator" in low or "brute force" in low or "bruteforce" in low:
         return "BruteForce"
     if "bot" in low:
         return "Bot"
@@ -133,31 +136,77 @@ def map_label(raw: object, level: str = "family", attempted_as_benign: bool = Tr
 # ---------------------------------------------------------------------------
 # 3. Loading
 # ---------------------------------------------------------------------------
+# Text columns that stay text (identifiers); every other column is a number.
+_TEXT_COLUMNS = {LABEL_COL, "flow_id", "src_ip", "dst_ip", "timestamp", "attempted_category"}
+
+
+def _fix_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop repeated header rows and make numeric columns numeric.
+
+    Some CSE-CIC-IDS2018 files repeat the header line in the middle of the
+    file, which turns every column into text. We drop those rows and convert
+    columns back to numbers (values that cannot be parsed become NaN and are
+    removed later by clean_dataframe).
+    """
+    if LABEL_COL in df.columns:
+        df = df[df[LABEL_COL].astype(str).str.strip().str.lower() != "label"]
+    for col in df.columns:
+        if col in _TEXT_COLUMNS or pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        converted = pd.to_numeric(df[col], errors="coerce")
+        if converted.notna().mean() > 0.99:  # really a numeric column
+            df[col] = converted
+    # Halve memory: float64 -> float32 for every numeric feature.
+    for col in df.columns:
+        if col != LABEL_COL and pd.api.types.is_float_dtype(df[col]):
+            df[col] = df[col].astype(np.float32)
+    return df
+
+
+def _sample_rows(df: pd.DataFrame, benign_frac: float, attack_frac: float,
+                 rng: np.random.Generator) -> pd.DataFrame:
+    """Keep each BENIGN row with prob. benign_frac, each attack row with attack_frac."""
+    if (benign_frac >= 1.0 and attack_frac >= 1.0) or LABEL_COL not in df.columns:
+        return df
+    is_benign = (df[LABEL_COL].map(clean_label_text).str.lower() == "benign").to_numpy()
+    p = np.where(is_benign, benign_frac, attack_frac)
+    return df[rng.random(len(df)) < p]
+
+
 def _read_one_csv(
     path: Path,
     max_rows: int | None,
     benign_frac: float = 1.0,
     seed: int = 42,
+    attack_frac: float = 1.0,
+    chunksize: int = 500_000,
 ) -> pd.DataFrame:
-    """Read one CSV; the original files are not valid UTF-8, so fall back.
+    """Read one CSV in chunks, sampling rows as they are read.
 
-    If benign_frac < 1, only that fraction of BENIGN rows is kept (all attack
-    rows are kept). Doing this per file keeps peak RAM low on laptops.
+    * benign_frac / attack_frac < 1 keep only that random fraction of BENIGN
+      / attack rows. Sampling chunk by chunk means a 5 GB file never has to fit
+      in RAM at once (needed for CSE-CIC-IDS2018 on a laptop).
+    * The original CIC files are not valid UTF-8, so we fall back to latin-1.
     """
+    rng = np.random.default_rng(seed)
+
+    def chunks(encoding: str):
+        return pd.read_csv(path, nrows=max_rows, low_memory=False, encoding=encoding,
+                           chunksize=chunksize)
+
+    parts = []
     try:
-        df = pd.read_csv(path, nrows=max_rows, low_memory=False, encoding="utf-8")
+        reader = chunks("utf-8")
+        for chunk in reader:
+            chunk = normalise_columns(chunk)
+            parts.append(_sample_rows(chunk, benign_frac, attack_frac, rng))
     except UnicodeDecodeError:
-        df = pd.read_csv(path, nrows=max_rows, low_memory=False, encoding="latin-1")
-    df = normalise_columns(df)
-    if benign_frac < 1.0 and LABEL_COL in df.columns:
-        is_benign = df[LABEL_COL].map(clean_label_text).str.lower() == "benign"
-        rng = np.random.default_rng(seed)
-        keep = ~is_benign | (rng.random(len(df)) < benign_frac)
-        df = df[keep.to_numpy()].reset_index(drop=True)
-    # Halve memory: float64 -> float32 for every numeric feature.
-    for col in df.columns:
-        if col != LABEL_COL and pd.api.types.is_float_dtype(df[col]):
-            df[col] = df[col].astype(np.float32)
+        parts, rng = [], np.random.default_rng(seed)
+        for chunk in chunks("latin-1"):
+            chunk = normalise_columns(chunk)
+            parts.append(_sample_rows(chunk, benign_frac, attack_frac, rng))
+    df = pd.concat(parts, ignore_index=True)
+    df = _fix_dtypes(df).reset_index(drop=True)
     df["source_file"] = path.name  # kept for traceability, never a feature
     return df
 
@@ -167,6 +216,7 @@ def load_csv_folder(
     max_rows_per_file: int | None = None,
     benign_load_frac: float = 1.0,
     seed: int = 42,
+    attack_load_frac: float = 1.0,
 ) -> pd.DataFrame:
     """Load and concatenate every *.csv under `folder` (recursively)."""
     folder = Path(folder)
@@ -179,7 +229,7 @@ def load_csv_folder(
     frames = []
     for f in files:
         log.info("Reading %s", f)
-        frames.append(_read_one_csv(f, max_rows_per_file, benign_load_frac, seed))
+        frames.append(_read_one_csv(f, max_rows_per_file, benign_load_frac, seed, attack_load_frac))
     df = pd.concat(frames, ignore_index=True)
     if LABEL_COL not in df.columns:
         raise KeyError(f"No 'Label' column found in {folder}; columns: {list(df.columns)[:10]}...")
@@ -226,9 +276,12 @@ def clean_dataframe(df: pd.DataFrame, cfg: Phase1Config) -> tuple[pd.DataFrame, 
     # --- labels -------------------------------------------------------
     df["raw_label"] = df[LABEL_COL].map(clean_label_text)
     rep.class_counts_raw = df["raw_label"].value_counts().to_dict()
-    df[LABEL_COL] = df["raw_label"].map(
-        lambda x: map_label(x, cfg.label_level, cfg.attempted_as_benign)
-    )
+    # Map each DISTINCT label once (fast, and warns once per unknown label).
+    mapping = {
+        raw: map_label(raw, cfg.label_level, cfg.attempted_as_benign)
+        for raw in df["raw_label"].unique()
+    }
+    df[LABEL_COL] = df["raw_label"].map(mapping)
 
     # --- leakage columns ----------------------------------------------
     leak = [c for c in IDENTIFIER_COLUMNS if c in df.columns]

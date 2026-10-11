@@ -87,6 +87,9 @@ class Phase1Config:
     # Recorded in the results JSON; it changes the benign/attack ratio, so
     # compare runs only when they used the same value.
     benign_load_frac: float = 1.0
+    # Same for attack rows (needed for CSE-CIC-IDS2018, which has millions
+    # of DDoS flows). 1.0 = keep every attack row.
+    attack_load_frac: float = 1.0
 
     # ---- stratified sampling (to fit Colab RAM) -------------------------
     # Each class keeps `sample_frac` of its rows, but never fewer than
@@ -127,10 +130,52 @@ class Phase1Config:
             raise ValueError("label_level must be 'family' or 'fine'")
         if self.imbalance not in {"class_weight", "smote", "both", "none"}:
             raise ValueError("imbalance must be class_weight|smote|both|none")
-        if not 0 < self.benign_load_frac <= 1:
-            raise ValueError("benign_load_frac must be in (0, 1]")
+        if not 0 < self.benign_load_frac <= 1 or not 0 < self.attack_load_frac <= 1:
+            raise ValueError("benign_load_frac and attack_load_frac must be in (0, 1]")
         if not 0 < self.val_size + self.test_size < 1:
             raise ValueError("val_size + test_size must be in (0, 1)")
+
+
+@dataclass
+class Phase2Config:
+    """Settings for Phase 2: train on one dataset, test on others.
+
+    Source (training) data is prepared exactly like Phase 1 (`source`).
+    Target datasets are never used for training, except in the explicit
+    "multi_dataset" experiment, which trains on `adapt_frac` of CSE-CIC-IDS2018
+    and is evaluated on the other part.
+    """
+
+    source: Phase1Config = field(default_factory=Phase1Config)
+    source_key: str = "cicids2017_improved"
+    cic_target_key: str = "cicids2018_improved"
+    unsw_key: str = "unsw_nb15"
+    results_dir: Path = PROJECT_ROOT / "results"
+
+    # CSE-CIC-IDS2018 is ~6x larger than 2017: sample while reading.
+    target_benign_load_frac: float = 0.05
+    target_attack_load_frac: float = 0.2
+    # After cleaning, at most this many rows per class are kept for testing.
+    target_max_per_class: int = 50_000
+    # Share of the CSE-CIC-IDS2018 sample used for TRAINING in the
+    # multi-dataset experiment (the rest is the 2018 test set for everyone).
+    adapt_frac: float = 0.5
+
+    models: tuple[str, ...] = ("random_forest", "xgboost", "lightgbm")
+    experiments: tuple[str, ...] = (
+        "all_features",
+        "all_features_norm",
+        "shared_features",
+        "shared_features_norm",
+        "multi_dataset",
+        "multi_dataset_norm",
+    )
+    seed: int = SEED
+
+    def __post_init__(self) -> None:
+        self.results_dir = Path(self.results_dir)
+        if not 0 < self.adapt_frac < 1:
+            raise ValueError("adapt_frac must be in (0, 1)")
 
 
 # The class name used for normal traffic everywhere in the project.

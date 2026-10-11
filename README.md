@@ -3,7 +3,7 @@
 A confidence-aware, explainable, zero-day-aware network intrusion detection
 system with an LLM-powered SOC Copilot. 
 
-> Status: **Phase 1 of 9 is done** (data pipeline and honest baselines).
+> Status: **Phase 1 done, Phase 2 code ready** (data pipeline and honest baselines).
 > Phases 2–9 (cross-dataset tests, open-set detection, confidence engine,
 > explainability and LLM copilot, alert correlation, drift, app,
 > documentation) come later.
@@ -82,6 +82,19 @@ python scripts/compare_phase1.py --original results/phase1_cicids2017_original.j
 ```
 
 Colab alternative: `notebooks/01_phase1_baselines.ipynb`.
+
+## Phase 2: cross-dataset generalisation
+
+Train on CIC-IDS2017 (corrected) and test on data the model never saw:
+CSE-CIC-IDS2018 (corrected, same features) and UNSW-NB15 (different tool;
+14 shared features with unit conversion). Experiments: all features, shared
+features, each with and without per-dataset normalisation, and
+multi-dataset training (2017 + half of 2018). The other half of 2018 is the
+test set for every experiment.
+
+```bash
+python scripts/phase2_all.py --cic2018-zip PATH --unsw-zip PATH --laptop
+```
 
 ## Results
 

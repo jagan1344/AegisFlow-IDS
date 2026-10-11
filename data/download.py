@@ -47,18 +47,11 @@ DATASETS: dict[str, dict] = {
         "license": "Free for research; cite Lanvin et al. / Engelen et al.",
         "phase": "2",
     },
-    "nf_unsw_nb15_v2": {
-        "name": "NF-UNSW-NB15-v2 (NetFlow, 43 features, Univ. of Queensland)",
-        "page": "https://staff.itee.uq.edu.au/marius/NIDS_datasets/",
-        "url": None,
-        "license": "Free for academic research with citation (Sarhan, Layeghy, Portmann).",
-        "phase": "2",
-    },
-    "nf_cse_cic_ids2018_v2": {
-        "name": "NF-CSE-CIC-IDS2018-v2 (NetFlow, 43 features, Univ. of Queensland)",
-        "page": "https://staff.itee.uq.edu.au/marius/NIDS_datasets/",
-        "url": None,
-        "license": "Free for academic research with citation (Sarhan, Layeghy, Portmann).",
+    "unsw_nb15": {
+        "name": "UNSW-NB15 partition CSVs (UNSW_NB15_training-set.csv + UNSW_NB15_testing-set.csv)",
+        "page": "https://research.unsw.edu.au/projects/unsw-nb15-dataset",
+        "url": None,  # download link on the page (folder 'Training and Testing Sets')
+        "license": "Free for research; cite Moustafa & Slay, MilCIS 2015.",
         "phase": "2",
     },
 }
