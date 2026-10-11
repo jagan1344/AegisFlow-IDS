@@ -199,12 +199,46 @@ class HttpRangeFile(io.RawIOBase):
         return n
 
 
+def list_folder(url: str) -> list[str]:
+    """Print the files of a web folder (an 'Index of /...' page) with sizes."""
+    import re
+    import urllib.parse
+
+    _use_system_certificates()
+    with urllib.request.urlopen(url) as r:  # noqa: S310 (user-chosen URL)
+        html = r.read().decode("utf-8", "replace")
+    links = []
+    for href in re.findall(r'href="([^"?#]+)"', html):
+        full = urllib.parse.urljoin(url, href)
+        if full.startswith(url) and full != url:
+            links.append(full)
+    links = sorted(set(links))
+    print(f"Files and folders in {url}:")
+    for link in links:
+        size = ""
+        if not link.endswith("/"):
+            try:
+                req = urllib.request.Request(link, method="HEAD")
+                with urllib.request.urlopen(req) as h:  # noqa: S310
+                    n = int(h.headers.get("Content-Length") or 0)
+                size = f"  ({n / 1e9:.2f} GB)" if n > 1e9 else f"  ({n / 1e6:,.0f} MB)"
+            except OSError:
+                pass
+        print(f"  {link}{size}")
+    if not links:
+        print("  (no links found - open the address in a browser instead)")
+    return links
+
+
 def remote_zip_extract(key: str, url: str, patterns: list[str]) -> list[str]:
     """Extract CSV members whose name contains any pattern from a REMOTE zip.
 
     With no patterns, only lists the CSV members (name and size).
     """
-    if url.lower().split("?")[0].endswith((".html", ".htm", "/")):
+    if url.split("?")[0].endswith("/"):
+        list_folder(url)
+        return []
+    if url.lower().split("?")[0].endswith((".html", ".htm")):
         raise RuntimeError(
             "that link is a web page, not a file. On the page, right-click the word "
             "'here' (or the 2018 file) and choose 'Copy link address', then use that link.")
@@ -253,7 +287,15 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         for day in days:
             _download_file(d["day_url"].format(day=day), out / f"{day}.csv")
         return
-    url = args.url or (d or {}).get("url")
+    urls = args.url if isinstance(args.url, list) else ([args.url] if args.url else [])
+    # Direct CSV links (e.g. day files in a web folder): stream each one.
+    if urls and all(u.lower().split("?")[0].endswith(".csv") for u in urls):
+        out.mkdir(parents=True, exist_ok=True)
+        for u in urls:
+            name = urllib.request.url2pathname(u.split("?")[0].rsplit("/", 1)[-1])
+            _download_file(u, out / Path(name).name)
+        return
+    url = urls[0] if urls else (d or {}).get("url")
     if not url:
         print(f"{args.dataset} needs a manual step. Open:\n  {d['page']}\n"
               "download the CSV zip, then run:\n"
@@ -305,7 +347,8 @@ def main() -> None:
     sub.add_parser("list").set_defaults(func=cmd_list)
     f = sub.add_parser("fetch")
     f.add_argument("dataset")
-    f.add_argument("--url", default=None)
+    f.add_argument("--url", nargs="+", default=None,
+                   help="a zip link, or one or more direct .csv links")
     f.add_argument("--days", nargs="+", default=None,
                    help="per-day datasets only, e.g. Wednesday-14-02-2018")
     f.set_defaults(func=cmd_fetch)

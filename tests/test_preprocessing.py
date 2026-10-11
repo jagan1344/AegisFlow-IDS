@@ -274,3 +274,52 @@ def test_remote_zip_rejects_web_page_link():
     with pytest.raises(RuntimeError, match="web page"):
         dl.remote_zip_extract("cicids2018_improved",
                               "https://intrusion-detection.distrinet-research.be/CNS2022/Dataset_Download.html", [])
+
+
+def test_remote_zip_lists_a_web_folder(tmp_path, monkeypatch, capsys):
+    dl = _load_download_module()
+    monkeypatch.setattr(dl, "_use_system_certificates", lambda: None)
+    for v in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
+        monkeypatch.delenv(v, raising=False)
+    srv_dir = tmp_path / "srv" / "Datasets"
+    srv_dir.mkdir(parents=True)
+    (srv_dir / "CSE-CIC-IDS2018.zip").write_bytes(b"x" * 2000)
+    (srv_dir / "index.html").write_text(
+        '<a href="../">Parent</a> <a href="CSE-CIC-IDS2018.zip">CSE-CIC-IDS2018.zip</a> <a href="?C=N;O=D">Name</a>')
+    srv = _range_server(tmp_path / "srv")
+    try:
+        base = f"http://127.0.0.1:{srv.server_address[1]}/Datasets/"
+        monkeypatch.setattr(dl.urllib.request, "urlopen", _index_aware_urlopen(dl.urllib.request.urlopen, base))
+        links = dl.remote_zip_extract("cicids2018_improved", base, [])
+    finally:
+        srv.shutdown()
+    assert links == []
+    out = capsys.readouterr().out
+    assert "CSE-CIC-IDS2018.zip" in out and "Parent" not in out
+
+
+def _index_aware_urlopen(real_urlopen, base):
+    """The test server has no directory index: map 'folder/' to 'folder/index.html'."""
+    import urllib.request
+
+    def opener(req, *a, **kw):
+        url = req.full_url if isinstance(req, urllib.request.Request) else req
+        if url == base:
+            url = base + "index.html"
+            req = url if not isinstance(req, urllib.request.Request) else urllib.request.Request(
+                url, headers=dict(req.header_items()), method=req.get_method())
+        return real_urlopen(req, *a, **kw)
+    return opener
+
+
+def test_fetch_direct_csv_links(tmp_path, monkeypatch):
+    import argparse
+
+    dl = _load_download_module()
+    monkeypatch.setattr(dl, "RAW_DIR", tmp_path / "raw")
+    got = []
+    monkeypatch.setattr(dl, "_download_file", lambda url, dest: got.append(dest.name))
+    dl.cmd_fetch(argparse.Namespace(dataset="cicids2018_improved", days=None, url=[
+        "https://x/Datasets/CSE-CIC-IDS2018/Wednesday-14-02-2018.csv",
+        "https://x/Datasets/CSE-CIC-IDS2018/Friday%2002-03-2018.csv"]))
+    assert got == ["Wednesday-14-02-2018.csv", "Friday 02-03-2018.csv"]
