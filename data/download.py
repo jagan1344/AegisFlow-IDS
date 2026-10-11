@@ -95,9 +95,22 @@ def cmd_list(_: argparse.Namespace) -> None:
 
 
 def extract(key: str, zip_path: Path) -> None:
-    """Unzip into data/raw/<key>/ (CSV files only)."""
+    """Unzip into data/raw/<key>/ (CSV files only).
+
+    `zip_path` may also be a FOLDER that already contains the CSV files
+    (e.g. you unzipped it yourself); they are copied in.
+    """
     out = _target(key)
     out.mkdir(parents=True, exist_ok=True)
+    zip_path = Path(zip_path)
+    if zip_path.is_dir():
+        csvs = sorted(zip_path.rglob("*.csv"))
+        for f in csvs:
+            shutil.copy2(f, out / f.name)
+        print(f"Copied {len(csvs)} CSV files to {out}")
+        return
+    if not zipfile.is_zipfile(zip_path):
+        raise RuntimeError(f"{zip_path} is not a zip file (incomplete download, or a web page saved as .zip)")
     with zipfile.ZipFile(zip_path) as zf:
         members = [m for m in zf.namelist() if m.lower().endswith(".csv")]
         for m in members:
@@ -123,6 +136,13 @@ def cmd_fetch(args: argparse.Namespace) -> None:
     print(f"Downloading {url}\n  -> {zip_path}")
     _use_system_certificates()
     urllib.request.urlretrieve(url, zip_path)  # noqa: S310 (user-chosen URL)
+    if not zipfile.is_zipfile(zip_path):
+        head = zip_path.read_bytes()[:300].decode("utf-8", "replace").lower()
+        zip_path.unlink()
+        if "<html" in head or "<!doctype" in head:
+            raise RuntimeError("the server returned a web page instead of the zip "
+                               "(the direct link now goes through a registration form)")
+        raise RuntimeError("the downloaded file is not a zip (incomplete download?)")
     extract(args.dataset, zip_path)
     zip_path.unlink()
 

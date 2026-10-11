@@ -5,9 +5,10 @@ Run from the repository root (VS Code terminal):
     python scripts/phase1_all.py --improved-zip "C:/Users/you/Downloads/<corrected>.zip"
 
 Options:
-    --original-zip PATH   use a MachineLearningCSV.zip you downloaded yourself
-                          (otherwise the script downloads it)
-    --improved-zip PATH   the corrected CIC-IDS2017 zip (manual download)
+    --original-zip PATH   a MachineLearningCSV.zip you downloaded yourself, or a
+                          folder containing its CSV files (otherwise the script
+                          tries to download it)
+    --improved-zip PATH   the corrected CIC-IDS2017 zip or CSV folder (manual download)
     --laptop              lower RAM use (keeps 30% of BENIGN rows while reading)
     --quick               only LogReg + LightGBM (a fast first run, ~5 min)
     --reuse               load results that already exist instead of retraining
@@ -51,7 +52,11 @@ def ensure_original(zip_path: str | None) -> bool:
         print(f"[ok] {key} already present")
         return True
     if zip_path:
-        download.extract(key, Path(zip_path))
+        try:
+            download.extract(key, Path(zip_path))
+        except (RuntimeError, OSError) as exc:
+            print(f"[!!] {exc}")
+            return False
         return has_csvs(key)
     url = download.DATASETS[key]["url"]
     print(f"[..] downloading {key} (~230 MB) from\n     {url}")
@@ -75,7 +80,11 @@ def ensure_improved(zip_path: str | None) -> bool:
         print(f"[ok] {key} already present")
         return True
     if zip_path:
-        download.extract(key, Path(zip_path))
+        try:
+            download.extract(key, Path(zip_path))
+        except (RuntimeError, OSError) as exc:
+            print(f"[!!] {exc}")
+            return False
         if has_csvs(key):
             return True
         print("[!!] no CSV files found inside that zip - send the zip's file list to your assistant")

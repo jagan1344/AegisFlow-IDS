@@ -155,3 +155,29 @@ def test_benign_load_frac_keeps_all_attacks(tmp_path):
     assert (part[LABEL_COL] != "BENIGN").sum() == n_att_full
     ratio = (part[LABEL_COL] == "BENIGN").sum() / (full[LABEL_COL] == "BENIGN").sum()
     assert 0.1 < ratio < 0.3
+
+
+def _load_download_module():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "data" / "download.py"
+    spec = importlib.util.spec_from_file_location("download", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_extract_accepts_folder_and_rejects_non_zip(tmp_path, monkeypatch):
+    dl = _load_download_module()
+    monkeypatch.setattr(dl, "RAW_DIR", tmp_path / "raw")
+    src = tmp_path / "unzipped" / "MachineLearningCVE"
+    src.mkdir(parents=True)
+    (src / "Monday.csv").write_text("a, Label\n1,BENIGN\n")
+    dl.extract("cicids2017_original", tmp_path / "unzipped")
+    assert (tmp_path / "raw" / "cicids2017_original" / "Monday.csv").exists()
+
+    fake = tmp_path / "page.zip"
+    fake.write_text("<html>please register</html>")
+    with pytest.raises(RuntimeError):
+        dl.extract("cicids2017_original", fake)
