@@ -16,6 +16,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.metrics import f1_score
 from sklearn.preprocessing import LabelEncoder
 
 from aegisflow.config import BENIGN_LABEL, Phase1Config, set_global_seed
@@ -33,6 +34,9 @@ from aegisflow.preprocessing import (
 )
 
 log = logging.getLogger(__name__)
+
+# Below this training-set macro-F1 a model is flagged as "failed to train".
+TRAIN_FIT_WARNING = 0.8
 
 
 def _jsonable(obj):
@@ -142,6 +146,19 @@ def run_phase1(
             cfg.latency_batch_rows, cfg.latency_single_repeats,
         )
         metrics["train_seconds"] = train_s
+        # Sanity check: a model that cannot even fit its own training data
+        # has failed to train (divergence, bug), which must not be reported
+        # as a property of the dataset.
+        n_chk = min(50_000, len(y_tr))
+        rows = np.random.default_rng(cfg.seed).choice(len(y_tr), n_chk, replace=False)
+        metrics["train_macro_f1"] = float(
+            f1_score(y_tr[rows], model.predict(X_tr[rows]), average="macro", zero_division=0)
+        )
+        if metrics["train_macro_f1"] < TRAIN_FIT_WARNING:
+            log.warning("[%s] %s reaches only macro-F1=%.3f on its TRAINING data. Either the "
+                        "model is too simple for this data (normal for logreg) or training "
+                        "failed (a bug or divergence). Check before reporting it.",
+                        dataset_name, name, metrics["train_macro_f1"])
         results["models"][name] = metrics
         log.info("[%s] %s macro-F1=%.4f FPR=%.4f", dataset_name, name,
                  metrics["macro_f1"], metrics["false_positive_rate"])
@@ -181,6 +198,7 @@ def summary_table(results: dict) -> pd.DataFrame:
                 "batch_ms_per_flow": m["latency"]["batch_ms_per_flow"],
                 "single_flow_ms": m["latency"]["single_flow_ms"],
                 "size_mb": m["model_size_mb"],
+                "train_macro_f1": m.get("train_macro_f1", float("nan")),  # absent in old JSONs
                 "train_s": m["train_seconds"],
             }
         )

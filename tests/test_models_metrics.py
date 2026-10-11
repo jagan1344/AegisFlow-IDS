@@ -116,3 +116,19 @@ def test_fit_model_fallback_for_estimator_without_sample_weight():
     y = np.array([0] * 200 + [1] * 20)
     m = fit_model(KNeighborsClassifier(n_neighbors=3), X, y, balanced_sample_weight(y))
     assert (m.predict(X) == y).mean() > 0.9
+
+
+def test_lightgbm_is_regularised_like_xgboost():
+    # Regression guard: without L2 regularisation LightGBM diverged on the
+    # original CIC-IDS2017 (macro-F1 0.31 on both train and test).
+    m = build_model("lightgbm")
+    assert m.reg_lambda >= 1.0 and m.min_child_weight >= 1.0
+
+
+def test_run_reports_train_fit(tmp_path):
+    cfg = Phase1Config(results_dir=tmp_path, artifacts_dir=tmp_path, sample_frac=1.0,
+                       min_per_class=10, min_class_samples=10, models=("lightgbm",), n_jobs=1,
+                       latency_batch_rows=100, latency_single_repeats=3)
+    res = run_phase1(make_synthetic_cicids(1500, seed=6), "t", cfg, save_artifacts=False)
+    assert 0.0 <= res["models"]["lightgbm"]["train_macro_f1"] <= 1.0
+    assert "train_macro_f1" in summary_table(res).columns

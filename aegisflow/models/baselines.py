@@ -111,6 +111,13 @@ def build_model(
             subsample=0.8,
             subsample_freq=1,
             colsample_bytree=0.8,
+            # LightGBM's defaults (reg_lambda=0, min_child_weight=1e-3) let a
+            # leaf with a tiny hessian output a huge value in multiclass
+            # softmax; training then diverges (seen on original CIC-IDS2017:
+            # macro-F1 0.31, also bad on the TRAIN set). These match
+            # XGBoost's defaults, so both boosters are regularised alike.
+            reg_lambda=1.0,
+            min_child_weight=1.0,
             n_jobs=n_jobs,
             random_state=seed,
             verbose=-1,
