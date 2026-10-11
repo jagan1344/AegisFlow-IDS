@@ -62,6 +62,9 @@ python scripts/phase1_all.py --improved-zip "PATH/TO/corrected_cicids2017.zip" -
 * `--laptop` keeps all attack rows but only 30% of BENIGN rows while
   reading, which suits laptops with 8 GB of RAM. Drop it if you have 16 GB or more.
 * `--quick` trains only LogReg and LightGBM, as a fast first run.
+* `--reuse` loads results that already exist instead of retraining them.
+* `CERTIFICATE_VERIFY_FAILED` means an antivirus or your network intercepts HTTPS.
+  Run `pip install truststore` and try again, or download the zip in your browser.
 * If the automatic download fails, download `MachineLearningCSV.zip` from
   the UNB page and add `--original-zip "PATH/TO/MachineLearningCSV.zip"`.
 * In VS Code you can also press **F5** and pick a run from `.vscode/launch.json`.

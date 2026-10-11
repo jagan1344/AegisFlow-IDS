@@ -10,6 +10,7 @@ Options:
     --improved-zip PATH   the corrected CIC-IDS2017 zip (manual download)
     --laptop              lower RAM use (keeps 30% of BENIGN rows while reading)
     --quick               only LogReg + LightGBM (a fast first run, ~5 min)
+    --reuse               load results that already exist instead of retraining
 
 Results: results/phase1_<dataset>.json and results/phase1_comparison.md
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import logging
 import sys
 from pathlib import Path
@@ -56,6 +58,9 @@ def ensure_original(zip_path: str | None) -> bool:
     try:
         download.cmd_fetch(argparse.Namespace(dataset=key, url=None))
     except Exception as exc:  # network errors, 403, moved file...
+        if "CERTIFICATE_VERIFY_FAILED" in str(exc):
+            print("[!!] Your network or antivirus intercepts HTTPS, so Python rejects the certificate.\n"
+                  "     Easiest fix: download the zip in your browser (steps below).")
         print(f"[!!] automatic download failed: {exc}\n"
               f"     Download MachineLearningCSV.zip by hand from\n"
               f"     {download.DATASETS[key]['page']}\n"
@@ -87,6 +92,7 @@ def main() -> None:
     p.add_argument("--improved-zip", default=None)
     p.add_argument("--laptop", action="store_true")
     p.add_argument("--quick", action="store_true")
+    p.add_argument("--reuse", action="store_true")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
@@ -109,9 +115,17 @@ def main() -> None:
     print("\n=== Step 2/3: training and evaluation ===")
     results = {}
     for key, ok in (("cicids2017_original", have_orig), ("cicids2017_improved", have_impr)):
-        if not ok:
+        saved = cfg.results_dir / f"phase1_{key}.json"
+        if args.reuse and saved.exists():
+            print(f"[ok] reusing {saved} (delete it or drop --reuse to retrain)")
+            res = json.loads(saved.read_text())
+            if res["config"].get("benign_load_frac") != cfg.benign_load_frac:
+                print("[!!] that file was made with different settings (--laptop or not); "
+                      "the comparison is only fair if both runs used the same settings")
+        elif not ok:
             continue
-        res = run_from_folder(cfg.data_dir / key, key, cfg)
+        else:
+            res = run_from_folder(cfg.data_dir / key, key, cfg)
         results[key] = res
         print(f"\n--- {key}: summary (test split) ---")
         print(summary_table(res).round(4).to_string(index=False))

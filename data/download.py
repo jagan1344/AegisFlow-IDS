@@ -64,6 +64,24 @@ DATASETS: dict[str, dict] = {
 }
 
 
+def _use_system_certificates() -> None:
+    """Trust the operating system's certificate store (Windows/macOS/Linux).
+
+    Antivirus "HTTPS scanning" and college/office networks re-sign web
+    traffic with their own certificate. Browsers trust it (it is in the
+    Windows store) but Python's built-in list does not, which shows up as
+    CERTIFICATE_VERIFY_FAILED / "self-signed certificate in certificate
+    chain". `truststore` makes Python use the same store as the browser.
+    Verification stays ON; we only change which trusted list is used.
+    """
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+    except ImportError:
+        pass  # optional dependency; download may still work without it
+
+
 def _target(key: str) -> Path:
     if key not in DATASETS:
         sys.exit(f"Unknown dataset {key!r}. Run: python data/download.py list")
@@ -103,6 +121,7 @@ def cmd_fetch(args: argparse.Namespace) -> None:
     out.mkdir(parents=True, exist_ok=True)
     zip_path = out / "download.zip"
     print(f"Downloading {url}\n  -> {zip_path}")
+    _use_system_certificates()
     urllib.request.urlretrieve(url, zip_path)  # noqa: S310 (user-chosen URL)
     extract(args.dataset, zip_path)
     zip_path.unlink()
