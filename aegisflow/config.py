@@ -66,7 +66,8 @@ class Phase1Config:
     label_level: str = "family"
     # In the improved dataset, "X - Attempted" flows are attack attempts that
     # carried no malicious payload (e.g. a failed connection). The authors
-    # explain they behave like benign traffic. True -> relabel as BENIGN.
+    # recommend relabelling them BENIGN when in doubt (True). False merges
+    # them into their attack (e.g. DoS). Never a separate class (authors' rule).
     attempted_as_benign: bool = True
     # Classes with fewer rows than this after cleaning are dropped (a class
     # with 3 rows cannot be split into train/val/test meaningfully).

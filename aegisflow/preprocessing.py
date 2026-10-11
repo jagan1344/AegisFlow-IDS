@@ -105,10 +105,13 @@ def map_label(raw: object, level: str = "family", attempted_as_benign: bool = Tr
     text = clean_label_text(raw)
     low = text.lower()
     if "attempted" in low:
-        # Improved datasets only: failed/empty attack attempts.
+        # Improved datasets only: attack flows with no malicious behaviour.
+        # The dataset authors: relabel them BENIGN when in doubt, and never
+        # use "Attempted" as a separate class. Otherwise merge into the attack.
         if attempted_as_benign:
             return BENIGN_LABEL
-        return "Attempted" if level == "family" else text
+        text = re.sub(r"\s*-\s*attempted\s*$", "", text, flags=re.IGNORECASE)
+        low = text.lower()
     if low == "benign":
         return BENIGN_LABEL
     if level == "fine":

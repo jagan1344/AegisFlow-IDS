@@ -55,8 +55,10 @@ def test_map_label_family(raw, expected):
     assert map_label(raw, "family", attempted_as_benign=True) == expected
 
 
-def test_map_label_attempted_kept_separate():
-    assert map_label("DoS Hulk - Attempted", "family", attempted_as_benign=False) == "Attempted"
+def test_map_label_attempted_merged_into_attack_never_separate():
+    assert map_label("DoS Hulk - Attempted", "family", attempted_as_benign=False) == "DoS"
+    assert map_label("Web Attack - XSS - Attempted", "family", attempted_as_benign=False) == "WebAttack"
+    assert map_label("DoS Hulk - Attempted", "fine", attempted_as_benign=False) == "DoS Hulk"
 
 
 def test_normalise_columns_drops_duplicate_column():
