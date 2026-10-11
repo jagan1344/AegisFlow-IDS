@@ -8,6 +8,9 @@ Each zip may also be a folder that contains the CSV files. Once a dataset is
 unpacked into data/raw/ you can leave its option out on later runs.
 
 Options:
+    --cic2018-version original   use the ORIGINAL CSE-CIC-IDS2018 per-day files from
+                                 AWS (downloaded automatically, ~2 GB for 6 days)
+                                 instead of the corrected version
     --laptop    same source sampling as Phase 1 laptop mode (keep comparable)
     --quick     LightGBM only (about 3x faster)
 Results: results/phase2.json and results/phase2_summary.md
@@ -38,8 +41,17 @@ _spec.loader.exec_module(download)
 
 
 def ensure(key: str, zip_path: str | None) -> bool:
-    """data/raw/<key>/ has CSVs (extracting `zip_path` if given)?"""
+    """data/raw/<key>/ has CSVs (extracting `zip_path` if given)?
+
+    Per-day datasets (original CSE-CIC-IDS2018 on AWS) are downloaded
+    automatically when missing.
+    """
     folder = download.RAW_DIR / key
+    if not zip_path and not any(folder.rglob("*.csv")) and download.DATASETS[key].get("day_url"):
+        try:
+            download.cmd_fetch(argparse.Namespace(dataset=key, url=None, days=None))
+        except OSError as exc:
+            print(f"[!!] {key}: download failed: {exc}")
     if zip_path:
         try:
             download.extract(key, Path(zip_path))
@@ -56,12 +68,15 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--cic2018-zip", default=None)
     p.add_argument("--unsw-zip", default=None)
+    p.add_argument("--cic2018-version", choices=["improved", "original"], default="improved")
     p.add_argument("--laptop", action="store_true")
     p.add_argument("--quick", action="store_true")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 
     cfg = Phase2Config()
+    if args.cic2018_version == "original":
+        cfg.cic_target_key = "cicids2018_original"
     if args.laptop:
         cfg.source.benign_load_frac = 0.3
         cfg.source.max_per_class = 100_000

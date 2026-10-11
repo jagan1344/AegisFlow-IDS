@@ -7,6 +7,9 @@ Usage (from the repository root):
     python data/download.py fetch cicids2017_original            # default URL
     python data/download.py fetch cicids2017_improved --url <zip>  # URL from the site
     python data/download.py verify cicids2017_original
+    python data/download.py fetch cicids2018_original               # 6 days from AWS
+    python data/download.py remote-zip cicids2018_improved <zip-url>  # list a remote zip
+    python data/download.py remote-zip cicids2018_improved <zip-url> --match 14-02-2018 16-02-2018
 
 Some providers put the files behind a short registration/terms page. For
 those the script prints the page to open; download the zip yourself, then:
@@ -15,6 +18,7 @@ those the script prints the page to open; download the zip yourself, then:
 from __future__ import annotations
 
 import argparse
+import io
 import shutil
 import sys
 import urllib.request
@@ -22,6 +26,10 @@ import zipfile
 from pathlib import Path
 
 RAW_DIR = Path(__file__).resolve().parent / "raw"
+
+# Public, no-account AWS folder of the original CSE-CIC-IDS2018 CSVs.
+_AWS_2018 = ("https://cse-cic-ids2018.s3.ca-central-1.amazonaws.com/"
+             "Processed%20Traffic%20Data%20for%20ML%20Algorithms")
 
 DATASETS: dict[str, dict] = {
     "cicids2017_original": {
@@ -45,6 +53,17 @@ DATASETS: dict[str, dict] = {
         "page": "https://intrusion-detection.distrinet-research.be/CNS2022/",
         "url": None,
         "license": "Free for research; cite Lanvin et al. / Engelen et al.",
+        "phase": "2",
+    },
+    "cicids2018_original": {
+        "name": "CSE-CIC-IDS2018 original (CIC/AWS, per-day CSVs, NOT label-corrected)",
+        "page": "https://www.unb.ca/cic/datasets/ids-2018.html",
+        "url": None,
+        "day_url": _AWS_2018 + "/{day}_TrafficForML_CICFlowMeter.csv",
+        # One day per attack family (Tuesday 20-02 is not in the AWS folder).
+        "default_days": ["Wednesday-14-02-2018", "Friday-16-02-2018", "Wednesday-21-02-2018",
+                         "Thursday-22-02-2018", "Wednesday-28-02-2018", "Friday-02-03-2018"],
+        "license": "Free for research; cite Sharafaldin et al., ICISSP 2018.",
         "phase": "2",
     },
     "unsw_nb15": {
@@ -114,9 +133,113 @@ def extract(key: str, zip_path: Path) -> None:
     print(f"Extracted {len(members)} CSV files to {out}")
 
 
+def _download_file(url: str, dest: Path) -> None:
+    """Stream a URL to disk with a progress line (resumes nothing, but a
+    finished file of the right size is not downloaded again)."""
+    _use_system_certificates()
+    with urllib.request.urlopen(url) as resp:  # noqa: S310 (fixed public URLs)
+        total = int(resp.headers.get("Content-Length") or 0)
+        if dest.exists() and total and dest.stat().st_size == total:
+            print(f"  {dest.name}: already downloaded")
+            return
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        done, step = 0, 50_000_000
+        with open(tmp, "wb") as fh:
+            while chunk := resp.read(1 << 20):
+                fh.write(chunk)
+                done += len(chunk)
+                if done // step != (done - len(chunk)) // step:
+                    print(f"  {dest.name}: {done / 1e6:,.0f} / {total / 1e6:,.0f} MB")
+    tmp.replace(dest)
+    print(f"  {dest.name}: done ({done / 1e6:,.0f} MB)")
+
+
+class HttpRangeFile(io.RawIOBase):
+    """A read-only, seekable file over HTTP using Range requests.
+
+    Python's zipfile only needs seek() + read(); a zip keeps its table of
+    contents at the END, so with this class we can list a remote zip and
+    extract single members while downloading only those bytes.
+    """
+
+    def __init__(self, url: str) -> None:
+        _use_system_certificates()
+        self.url, self.pos = url, 0
+        req = urllib.request.Request(url, headers={"Range": "bytes=0-0"})
+        with urllib.request.urlopen(req) as r:  # noqa: S310 (user-chosen URL)
+            if r.status != 206:
+                raise RuntimeError("this server does not support partial downloads "
+                                   "(HTTP Range); download the whole file instead")
+            self.size = int(r.headers["Content-Range"].split("/")[-1])
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self.pos
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        base = {0: 0, 1: self.pos, 2: self.size}[whence]
+        self.pos = max(0, base + offset)
+        return self.pos
+
+    def readinto(self, b) -> int:
+        if self.pos >= self.size or len(b) == 0:
+            return 0
+        end = min(self.pos + len(b), self.size) - 1
+        req = urllib.request.Request(self.url, headers={"Range": f"bytes={self.pos}-{end}"})
+        with urllib.request.urlopen(req) as r:  # noqa: S310
+            data = r.read()
+        n = len(data)
+        b[:n] = data
+        self.pos += n
+        return n
+
+
+def remote_zip_extract(key: str, url: str, patterns: list[str]) -> list[str]:
+    """Extract CSV members whose name contains any pattern from a REMOTE zip.
+
+    With no patterns, only lists the CSV members (name and size).
+    """
+    raw = io.BufferedReader(HttpRangeFile(url), buffer_size=8 << 20)
+    with zipfile.ZipFile(raw) as zf:
+        members = [i for i in zf.infolist() if i.filename.lower().endswith(".csv")]
+        if not patterns:
+            for i in members:
+                print(f"  {i.filename}  ({i.file_size / 1e6:,.0f} MB unzipped, "
+                      f"{i.compress_size / 1e6:,.0f} MB to download)")
+            return []
+        chosen = [i for i in members if any(p.lower() in i.filename.lower() for p in patterns)]
+        if not chosen:
+            raise RuntimeError(f"no CSV in the zip matches {patterns}; run without --match to list them")
+        out = _target(key)
+        out.mkdir(parents=True, exist_ok=True)
+        for i in chosen:
+            print(f"  extracting {i.filename} ({i.compress_size / 1e6:,.0f} MB to download)...")
+            with zf.open(i) as src, open(out / Path(i.filename).name, "wb") as dst:
+                shutil.copyfileobj(src, dst, 8 << 20)
+        return [i.filename for i in chosen]
+
+
+def cmd_remote_zip(args: argparse.Namespace) -> None:
+    names = remote_zip_extract(args.dataset, args.url, args.match or [])
+    if names:
+        print(f"Extracted {len(names)} CSV files to {_target(args.dataset)}")
+
+
 def cmd_fetch(args: argparse.Namespace) -> None:
     d = DATASETS[args.dataset] if args.dataset in DATASETS else None
     out = _target(args.dataset)
+    if d and d.get("day_url"):
+        days = args.days or d["default_days"]
+        out.mkdir(parents=True, exist_ok=True)
+        print(f"Downloading {len(days)} day files of {args.dataset} into {out}")
+        for day in days:
+            _download_file(d["day_url"].format(day=day), out / f"{day}.csv")
+        return
     url = args.url or (d or {}).get("url")
     if not url:
         print(f"{args.dataset} needs a manual step. Open:\n  {d['page']}\n"
@@ -170,7 +293,15 @@ def main() -> None:
     f = sub.add_parser("fetch")
     f.add_argument("dataset")
     f.add_argument("--url", default=None)
+    f.add_argument("--days", nargs="+", default=None,
+                   help="per-day datasets only, e.g. Wednesday-14-02-2018")
     f.set_defaults(func=cmd_fetch)
+    r = sub.add_parser("remote-zip", help="list / extract chosen CSVs from a zip on a web server")
+    r.add_argument("dataset")
+    r.add_argument("url")
+    r.add_argument("--match", nargs="+", default=None,
+                   help="extract CSVs whose name contains any of these, e.g. 14-02-2018 16-02-2018")
+    r.set_defaults(func=cmd_remote_zip)
     e = sub.add_parser("extract")
     e.add_argument("dataset")
     e.add_argument("zip")

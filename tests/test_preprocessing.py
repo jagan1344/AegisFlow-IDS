@@ -183,3 +183,87 @@ def test_extract_accepts_folder_and_rejects_non_zip(tmp_path, monkeypatch):
     fake.write_text("<html>please register</html>")
     with pytest.raises(RuntimeError):
         dl.extract("cicids2017_original", fake)
+
+
+def _range_server(directory):
+    """Tiny local HTTP server that supports Range requests (like real servers)."""
+    import http.server
+    import threading
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(directory), **kw)
+
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            path = self.translate_path(self.path)
+            data = open(path, "rb").read()
+            rng = self.headers.get("Range")
+            if rng:
+                start, end = rng.replace("bytes=", "").split("-")
+                start, end = int(start), min(int(end), len(data) - 1)
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+                body = data[start:end + 1]
+            else:
+                self.send_response(200)
+                body = data
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_remote_zip_extracts_only_chosen_days(tmp_path, monkeypatch):
+    import zipfile
+
+    dl = _load_download_module()
+    monkeypatch.setattr(dl, "RAW_DIR", tmp_path / "raw")
+    monkeypatch.setattr(dl, "_use_system_certificates", lambda: None)
+    srv_dir = tmp_path / "srv"
+    srv_dir.mkdir()
+    with zipfile.ZipFile(srv_dir / "all.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+        for day in ("Wednesday-14-02-2018", "Tuesday-20-02-2018", "Friday-02-03-2018"):
+            zf.writestr(f"CSECICIDS2018/{day}.csv", "a,Label\n" + "1,BENIGN\n" * 1000)
+    srv = _range_server(srv_dir)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    try:
+        url = f"http://127.0.0.1:{srv.server_address[1]}/all.zip"
+        names = dl.remote_zip_extract("cicids2018_improved", url, ["14-02-2018", "02-03-2018"])
+    finally:
+        srv.shutdown()
+    out = tmp_path / "raw" / "cicids2018_improved"
+    assert len(names) == 2
+    assert sorted(p.name for p in out.iterdir()) == ["Friday-02-03-2018.csv", "Wednesday-14-02-2018.csv"]
+    assert (out / "Friday-02-03-2018.csv").read_text().count("BENIGN") == 1000
+
+
+def test_fetch_per_day_uses_default_days(tmp_path, monkeypatch):
+    import argparse
+
+    dl = _load_download_module()
+    monkeypatch.setattr(dl, "RAW_DIR", tmp_path / "raw")
+    got = []
+    monkeypatch.setattr(dl, "_download_file", lambda url, dest: got.append((url, dest.name)))
+    dl.cmd_fetch(argparse.Namespace(dataset="cicids2018_original", url=None, days=None))
+    assert len(got) == 6
+    assert got[0][0].endswith("Wednesday-14-02-2018_TrafficForML_CICFlowMeter.csv")
+    assert got[0][1] == "Wednesday-14-02-2018.csv"
+
+
+def test_aws_2018_abbreviated_columns_map_to_cic_names():
+    from aegisflow.preprocessing import canonical_name
+
+    for raw, canon in [("Tot Fwd Pkts", "total_fwd_packets"), ("TotLen Bwd Pkts", "total_length_bwd_packets"),
+                       ("Flow Byts/s", "flow_bytes_s"), ("Init Fwd Win Byts", "fwd_init_win_bytes"),
+                       ("Pkt Size Avg", "avg_packet_size"), ("Fwd IAT Tot", "fwd_iat_total")]:
+        assert canonical_name(raw) == canon
