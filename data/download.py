@@ -204,8 +204,18 @@ def remote_zip_extract(key: str, url: str, patterns: list[str]) -> list[str]:
 
     With no patterns, only lists the CSV members (name and size).
     """
+    if url.lower().split("?")[0].endswith((".html", ".htm", "/")):
+        raise RuntimeError(
+            "that link is a web page, not a file. On the page, right-click the word "
+            "'here' (or the 2018 file) and choose 'Copy link address', then use that link.")
     raw = io.BufferedReader(HttpRangeFile(url), buffer_size=8 << 20)
-    with zipfile.ZipFile(raw) as zf:
+    try:
+        zf = zipfile.ZipFile(raw)
+    except zipfile.BadZipFile:
+        raise RuntimeError(
+            "the link does not point to a .zip file (maybe a web page or a .7z/.tar.gz "
+            "archive). Send the link to your assistant.") from None
+    with zf:
         members = [i for i in zf.infolist() if i.filename.lower().endswith(".csv")]
         if not patterns:
             for i in members:
@@ -225,7 +235,10 @@ def remote_zip_extract(key: str, url: str, patterns: list[str]) -> list[str]:
 
 
 def cmd_remote_zip(args: argparse.Namespace) -> None:
-    names = remote_zip_extract(args.dataset, args.url, args.match or [])
+    try:
+        names = remote_zip_extract(args.dataset, args.url, args.match or [])
+    except RuntimeError as exc:
+        sys.exit(f"[!!] {exc}")
     if names:
         print(f"Extracted {len(names)} CSV files to {_target(args.dataset)}")
 

@@ -267,3 +267,10 @@ def test_aws_2018_abbreviated_columns_map_to_cic_names():
                        ("Flow Byts/s", "flow_bytes_s"), ("Init Fwd Win Byts", "fwd_init_win_bytes"),
                        ("Pkt Size Avg", "avg_packet_size"), ("Fwd IAT Tot", "fwd_iat_total")]:
         assert canonical_name(raw) == canon
+
+
+def test_remote_zip_rejects_web_page_link():
+    dl = _load_download_module()
+    with pytest.raises(RuntimeError, match="web page"):
+        dl.remote_zip_extract("cicids2018_improved",
+                              "https://intrusion-detection.distrinet-research.be/CNS2022/Dataset_Download.html", [])
