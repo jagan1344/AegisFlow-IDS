@@ -233,6 +233,68 @@ def evaluate_transfer(
     return out
 
 
+TCP_WINDOW_FEATURES = ("fwd_init_win_bytes", "bwd_init_win_bytes")
+
+
+def feature_importance(model, feats: list[str], top: int = 10) -> dict[str, float]:
+    """Normalised importances (sum = 1) of the top features, if the model has them."""
+    imp = getattr(model, "feature_importances_", None)
+    if imp is None:
+        return {}
+    imp = np.asarray(imp, dtype=float)
+    if imp.sum() <= 0:
+        return {}
+    imp = imp / imp.sum()
+    order = np.argsort(imp)[::-1][:top]
+    return {feats[i]: float(imp[i]) for i in order}
+
+
+def feature_shift(
+    src: pd.DataFrame, tgt: pd.DataFrame, feats: list[str], seed: int = 42, max_rows: int = 5000
+) -> dict:
+    """Per family present in both datasets: median of each feature in each
+    dataset and the two-sample Kolmogorov-Smirnov statistic (0 = identical
+    distributions, 1 = no overlap at all).
+
+    For BENIGN this doubles as a units check: if the medians differed by a
+    factor like 1000 for every time feature, the datasets would use
+    different units (a bug), not just different traffic.
+    """
+    from scipy.stats import ks_2samp
+
+    rng = np.random.default_rng(seed)
+    out = {}
+    families = sorted(set(src[LABEL_COL]) & set(tgt[LABEL_COL]))
+    for fam in families:
+        a = src[src[LABEL_COL] == fam]
+        b = tgt[tgt[LABEL_COL] == fam]
+        if len(a) > max_rows:
+            a = a.iloc[rng.choice(len(a), max_rows, replace=False)]
+        if len(b) > max_rows:
+            b = b.iloc[rng.choice(len(b), max_rows, replace=False)]
+        rows = {}
+        for f in feats:
+            x, y = a[f].to_numpy(np.float64), b[f].to_numpy(np.float64)
+            rows[f] = {
+                "median_2017": float(np.median(x)),
+                "median_2018": float(np.median(y)),
+                "ks": float(ks_2samp(x, y).statistic),
+            }
+        out[fam] = {"n_2017": int(len(a)), "n_2018": int(len(b)), "features": rows}
+    return out
+
+
+def shift_table(results: dict, top: int = 5) -> pd.DataFrame:
+    """The `top` most-shifted features (highest KS) for every family."""
+    rows = []
+    for fam, d in results.get("shift_2017_vs_2018", {}).items():
+        feats = sorted(d["features"].items(), key=lambda kv: kv[1]["ks"], reverse=True)[:top]
+        for f, v in feats:
+            rows.append({"family": fam, "feature": f, "ks": v["ks"],
+                         "median_2017": v["median_2017"], "median_2018": v["median_2018"]})
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # 4. The Phase-2 experiment
 # ---------------------------------------------------------------------------
@@ -321,13 +383,26 @@ def run_phase2(
         "data": info,
         "experiments": {},
     }
+    if t_test is not None:
+        # Why does transfer fail? Compare each feature between datasets,
+        # family by family (and BENIGN, which also checks units match).
+        results["shift_2017_vs_2018"] = feature_shift(
+            s_train, pd.concat([t_adapt, t_test]), shared, seed=cfg.seed)
 
     for exp in cfg.experiments:
         multi = exp.startswith("multi")
         if multi and t_adapt is None:
             log.info("Skipping %s (no CSE-CIC-IDS2018 data)", exp)
             continue
-        feats = all_feats if exp.startswith("all") else shared
+        if exp.startswith("all"):
+            feats = all_feats
+        elif exp.startswith("shared_no_tcpwin"):
+            # Ablation: initial TCP window sizes mostly reflect the operating
+            # system of the machines in one lab (a "fingerprint"), not attack
+            # behaviour. Does the model rely on that shortcut?
+            feats = [f for f in shared if f not in TCP_WINDOW_FEATURES]
+        else:
+            feats = shared
         norm = exp.endswith("_norm")
 
         # Feature matrices for every dataset, each normalised by itself.
@@ -354,7 +429,7 @@ def run_phase2(
             if multi:
                 X_train = np.vstack([X_train, Xt_ad])
                 y_train_lbl = np.concatenate([y_train_lbl, t_adapt[LABEL_COL].to_numpy()])
-        if u is not None and feats == shared:
+        if u is not None and set(feats) <= set(shared):
             (Xu,) = prep([u])
             eval_sets["unsw_nb15"] = (Xu, u[LABEL_COL].to_numpy())
 
@@ -375,6 +450,7 @@ def run_phase2(
             m_res = {"train_seconds": time.time() - ts}
             for set_name, (X, lbl) in eval_sets.items():
                 m_res[set_name] = evaluate_transfer(model, X, lbl, class_names)
+            m_res["feature_importance"] = feature_importance(model, feats)
             exp_res["models"][name] = m_res
             log.info("[phase2] %s / %s: %s", exp, name, {
                 k: round(v.get("binary_f1", float("nan")), 4)
@@ -433,4 +509,12 @@ def summary_markdown(results: dict) -> str:
         t.round(4).to_markdown(index=False),
         "",
     ]
+    st = shift_table(results)
+    if len(st):
+        parts += [
+            "## Distribution shift 2017 -> 2018 (most-shifted shared features per family)\n",
+            "KS = Kolmogorov-Smirnov statistic: 0 identical, 1 no overlap.\n",
+            st.round(4).to_markdown(index=False),
+            "",
+        ]
     return "\n".join(parts)

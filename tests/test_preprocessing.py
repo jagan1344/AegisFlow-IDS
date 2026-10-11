@@ -323,3 +323,10 @@ def test_fetch_direct_csv_links(tmp_path, monkeypatch):
         "https://x/Datasets/CSE-CIC-IDS2018/Wednesday-14-02-2018.csv",
         "https://x/Datasets/CSE-CIC-IDS2018/Friday%2002-03-2018.csv"]))
     assert got == ["Wednesday-14-02-2018.csv", "Friday 02-03-2018.csv"]
+
+
+def test_extract_missing_path_is_clear(tmp_path, monkeypatch):
+    dl = _load_download_module()
+    monkeypatch.setattr(dl, "RAW_DIR", tmp_path / "raw")
+    with pytest.raises(RuntimeError, match="does not exist"):
+        dl.extract("unsw_nb15", tmp_path / "no_such_folder")

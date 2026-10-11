@@ -115,6 +115,9 @@ def extract(key: str, zip_path: Path) -> None:
     out = _target(key)
     out.mkdir(parents=True, exist_ok=True)
     zip_path = Path(zip_path)
+    if not zip_path.exists():
+        raise RuntimeError(f"{zip_path} does not exist (check the folder/file name and that "
+                           "the download finished)")
     if zip_path.is_dir():
         csvs = sorted(zip_path.rglob("*.csv"))
         for f in csvs:

@@ -136,3 +136,27 @@ def test_run_phase2_without_targets(tmp_path):
     res = run_phase2(cfg, make_synthetic_cicids(2000, seed=1, improved=True), write=False)
     assert "multi_dataset" not in res["experiments"]   # needs 2018 data
     assert "cicids2017_test" in res["experiments"]["all_features"]["models"]["lightgbm"]
+
+
+def test_shift_diagnostic_and_tcpwin_ablation(tmp_path):
+    from aegisflow.crossdataset import TCP_WINDOW_FEATURES, shift_table
+
+    src_cfg = Phase1Config(sample_frac=1.0, min_per_class=10, min_class_samples=10, n_jobs=1)
+    cfg = Phase2Config(source=src_cfg, results_dir=tmp_path, models=("lightgbm",),
+                       experiments=("shared_features", "shared_no_tcpwin"))
+    res = run_phase2(cfg, make_synthetic_cicids(3000, seed=1, improved=True),
+                     make_synthetic_cicids(3000, seed=2, improved=True, labels_2018=True),
+                     make_synthetic_unsw(1500, seed=3), write=False)
+    shift = res["shift_2017_vs_2018"]
+    assert "BENIGN" in shift
+    ks = shift["BENIGN"]["features"]["flow_duration"]["ks"]
+    assert 0.0 <= ks <= 1.0 and ks > 0.1          # synthetic 2018 is shifted (x1.5)
+    assert len(shift_table(res)) > 0
+    ab = res["experiments"]["shared_no_tcpwin"]
+    assert ab["n_features"] == len(SHARED_FEATURES) - len(TCP_WINDOW_FEATURES)
+    assert "unsw_nb15" in ab["models"]["lightgbm"]  # subset of shared -> UNSW still evaluated
+    imp = ab["models"]["lightgbm"]["feature_importance"]
+    assert imp and not set(imp) & set(TCP_WINDOW_FEATURES)
+    top10 = sum(res["experiments"]["shared_features"]["models"]["lightgbm"]
+                ["feature_importance"].values())
+    assert 0.5 < top10 <= 1.0 + 1e-9   # top-10 of 14 normalised importances

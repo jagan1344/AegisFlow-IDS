@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import logging
 import sys
 from pathlib import Path
@@ -27,10 +28,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from aegisflow.config import Phase2Config  # noqa: E402
+from aegisflow.config import PROJECT_ROOT  # noqa: E402
 from aegisflow.crossdataset import (  # noqa: E402
     load_unsw_nb15,
     per_family_table,
     run_phase2,
+    shift_table,
     summary_table,
 )
 from aegisflow.preprocessing import load_csv_folder  # noqa: E402
@@ -64,6 +67,39 @@ def ensure(key: str, zip_path: str | None) -> bool:
     return False
 
 
+def load_with_cache(key: str, benign_frac: float, attack_frac: float, seed: int,
+                    use_cache: bool = True):
+    """load_csv_folder, but keep the sampled rows in a parquet file.
+
+    Reading 6 GB of CSV takes ~20 minutes; the cached sample loads in
+    seconds. The cache is reused only if the same files (names + sizes) and
+    the same sampling settings are used, otherwise it is rebuilt.
+    """
+    import pandas as pd
+
+    folder = download.RAW_DIR / key
+    signature = {
+        "files": sorted((f.name, f.stat().st_size) for f in folder.rglob("*.csv")),
+        "benign_frac": benign_frac, "attack_frac": attack_frac, "seed": seed,
+    }
+    cache_dir = PROJECT_ROOT / "artifacts" / "phase2"
+    data_file, sig_file = cache_dir / f"{key}_sample.parquet", cache_dir / f"{key}_sample.json"
+    if use_cache and data_file.exists() and sig_file.exists():
+        if json.loads(sig_file.read_text()) == json.loads(json.dumps(signature)):
+            print(f"[ok] {key}: using cached sample {data_file.name} (delete it to re-read the CSVs)")
+            return pd.read_parquet(data_file)
+    df = load_csv_folder(folder, None, benign_frac, seed, attack_frac)
+    if use_cache:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        out = df.copy()
+        for col in out.columns:  # parquet needs one type per column
+            if out[col].dtype == object:
+                out[col] = out[col].astype(str)
+        out.to_parquet(data_file, index=False)
+        sig_file.write_text(json.dumps(signature))
+    return df
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--cic2018-zip", default=None)
@@ -71,6 +107,7 @@ def main() -> None:
     p.add_argument("--cic2018-version", choices=["improved", "original"], default="improved")
     p.add_argument("--laptop", action="store_true")
     p.add_argument("--quick", action="store_true")
+    p.add_argument("--no-cache", action="store_true", help="always re-read the 2018 CSV files")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 
@@ -95,8 +132,8 @@ def main() -> None:
     s = cfg.source
     source_raw = load_csv_folder(download.RAW_DIR / cfg.source_key, s.max_rows_per_file,
                                  s.benign_load_frac, s.seed, s.attack_load_frac)
-    cic_raw = (load_csv_folder(download.RAW_DIR / cfg.cic_target_key, None,
-                               cfg.target_benign_load_frac, cfg.seed, cfg.target_attack_load_frac)
+    cic_raw = (load_with_cache(cfg.cic_target_key, cfg.target_benign_load_frac,
+                               cfg.target_attack_load_frac, cfg.seed, not args.no_cache)
                if have_2018 else None)
     unsw_raw = load_unsw_nb15(download.RAW_DIR / cfg.unsw_key) if have_unsw else None
 
@@ -113,6 +150,11 @@ def main() -> None:
             print(f"\n--- {set_name}: share of each family flagged as attack "
                   f"({exp}, {cfg.models[-1]}) ---")
             print(per_family_table(res, exp, cfg.models[-1], set_name).round(4).to_string())
+    st = shift_table(res)
+    if len(st):
+        print("\n--- Distribution shift 2017 -> 2018: most-shifted features per family "
+              "(KS: 0 same, 1 no overlap) ---")
+        print(st.round(4).to_string(index=False))
     print(f"\nWrote {cfg.results_dir / 'phase2.json'} and {cfg.results_dir / 'phase2_summary.md'}")
 
 
